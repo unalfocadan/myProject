@@ -1,0 +1,203 @@
+Cache for Windows^INT^^~Format=Cache.S~^RAW
+%RO on 19 Jun 2019  12:24 AM
+mobydick^INT^1^65183,1197.077688^0
+mobydick ;
+ ;
+ q
+ ;
+ /*******************************
+ * NAME: repeatedWords
+ * DESC: This procedure "downloads the text file"
+ * 		and then counts how often each word occurs in the book 
+ *		and save the result in an xml file.
+ * PARAMS:	N/A
+ * RETURNS: N/A
+ * VERSION HISTORY:
+ *		v1 - Created - UFocadan
+ *******************************/
+repeatedWords(%dummy) ;
+ new file,filedDataStream,lineNumber,string,spaceLen,spaceCnt,spacePiece,wordCnt,charStream,returnString
+ //
+ kill ^mobydick
+ set file="c:\Moby_Dick.txt"
+ set filedDataStream=##Class(%Library.FileCharacterStream).%New()
+ set filedDataStream.Filename=file
+ //
+ do filedDataStream.Rewind()
+ for { quit:filedDataStream.AtEnd
+ 	set lineNumber=$increment(lineNumber)
+ 	set ^mobydick($job,"line",lineNumber)=filedDataStream.ReadLine()
+ }
+ kill filedDataStream
+ //
+ set lineNumber = ""
+ for { set lineNumber = $order(^mobydick($job,"line",lineNumber)) quit:('$length(lineNumber))
+ 	set string=$get(^mobydick($j,"line",lineNumber))
+ 	continue:('$length(string))
+ 	set spaceLen=$length(string,$char(32))
+ 	for spaceCnt=1:1:spaceLen {
+ 		set spacePiece=$p(string,$char(32),spaceCnt)
+ 		set spacePiece=$zstrip($zcvt(spacePiece,"U"),"*e'u'n")
+ 		continue:('$length(spacePiece))
+ 		set ^mobydick($job,"word",spacePiece,"string")=$p(string,$char(32),spaceCnt)
+ 		set ^mobydick($job,"word",spacePiece,"count")=$increment(^mobydick($job,"word",spacePiece,"count"))
+ 	}
+ }
+ //
+ kill ^SCRXML
+ set spacePiece=""
+ for { set spacePiece=$order(^mobydick($job,"word",spacePiece)) quit:('$length(spacePiece))
+ 	set wordCnt=$o(^SCRXML($job,"words",1,"word",""),-1)+1
+ 	set ^SCRXML($job,"words",1,"word",wordCnt,"text")=^mobydick($job,"word",spacePiece,"string")
+	set ^SCRXML($job,"words",1,"word",wordCnt,"count")=^mobydick($job,"word",spacePiece,"count")	
+ }
+ //
+ set (charStream,returnString)=""
+ do CreateXML("^SCRXML($job",.charStream,0,"","^")
+ //
+ kill ^SCRXML
+ kill ^mobydick
+ set file="c:\Moby_Dick.xml"
+ open file:"nws" use file 
+ do charStream.Rewind()
+ set returnString=charStream.Read()
+ while (returnString'="") {
+	set returnString=$zstrip(returnString,"*c","",$char(9)_$char(13)_$char(10))
+	write returnString
+ 	set returnString=charStream.Read()
+ }
+ close file 
+ quit 1
+ //
+ // Create an XML string based off the ^SCRXML structure.
+ /*************************************
+  * NAME: CreateXML
+  * DESC: Create an XML document based off a global array.
+  *
+  *   The following global structure:
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"Attribute")=12345
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"Attribute2")=13456
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"Sub-element",1,"sub-element2",1)="Content"
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"Sub-element",1,"sub-element2",1,"attribute")=32
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"Sub-element",1,"sub-element2",1,"id")=32
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"Sub-element",2)="Content"
+  *
+  *   Also allows for ordering indeces:
+  *   ^SCRXML($j,"root",1,"SampleElement",1,index_orderDelimiter_"Attribute")=12345
+  *   ^SCRXML($j,"root",1,"SampleElement",1,index_orderDelimiter_"Sub-element",1,"sub-element2",1)="Content"
+  *	  Example:
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"a^Attribute")=12345
+  *   ^SCRXML($j,"root",1,"SampleElement",1,"b^Sub-element",1,"sub-element2",1)="Content"
+  *   Note: It is highly recommended that you use a control character (such as $c(31)) for your delimiter to avoid any delimiters that may naturally occur in the data
+  *  
+  *   Translates to this XML document.
+  *   <?xml version="1.0" encoding="UTF-8"?>
+  *   <root>
+  *   <SampleElement Attribute="12345" Attribute2="13456">
+  *      <Sub-element>
+  *         <sub-element2 attribute="32" id="32">Content</sub-element2>
+  *      </Sub-element>
+  *      <Sub-element>Content</Sub-element>
+  *   </SampleElement>
+  *   </root>
+  *    
+  * PARAMS:
+  *   glo                 - the name of the global or array to look at. If empty, it will default to '^SCRXML($j'
+  *   charstream (ByRef)  - the %GlobalCharacterStream that the output will return in. Pass by Reference
+  *   indent              - 1 to format the output with indents. 0 to have the output all on one line. Default is 0
+  *   toTerminal          - 1 to output the XML to the terminal.
+  *   orderDelimiter	  - the character(s) being used to seperate the indexing piece and the name piece of an element or attribute name
+  * RETURN:
+  *   1 - If the writer.EndDocument was successfully called and the XML was successfully created
+  *   0 - writer.EndDocument failed.
+  * Please Note: There can only be one root element.
+  **************************************/
+CreateXML(glo,charstream,indent,toTerminal,orderDelimiter)
+ new writer,status,root,nexttag,text,ok,nextcnt
+ set:$g(glo)="" glo="^SCRXML($j"
+ quit:'$d(@(glo_")")) 0
+ set:$g(indent)="" indent=0
+ set writer=##class(%XML.Writer).%New()
+ set writer.Indent=indent
+ set writer.Charset="UTF-8"
+ set charstream=##class(%Library.GlobalCharacterStream).%New()
+ if $g(toTerminal)=1 set status=writer.OutputToDevice()
+ if $g(toTerminal)'=1 set status=writer.OutputToStream(charstream)
+ set status=writer.StartDocument()
+ 
+ set root=$o(@(glo_","""")"))  ;only one root element per XML doc
+ set status=writer.RootElement(root)
+ 
+ ; Write all the root attributes first - this is required by the Cache XML writer
+ set nexttag=""
+ for { set nexttag=$o(@(glo_",root,1,nexttag)")) quit:nexttag=""
+   set text=$g(@(glo_",root,1,nexttag)"))
+   if text'="" set ok=writer.WriteAttribute(nexttag,text)
+ }  
+ ; Begin recursively traversing the elements.
+ set nextcnt=""
+ for { set nextcnt=$o(@(glo_",root,nextcnt)")) quit:nextcnt=""
+ 	set nexttag=""
+ 	for { set nexttag=$o(@(glo_",root,nextcnt,nexttag)")) quit:nexttag=""
+   	set text=$g(@(glo_",root,nextcnt,nexttag)"))
+   	if text'="" Continue
+   	if text="",$d(@(glo_",root,nextcnt,nexttag)"))=10 {
+      	do element(glo_","""_root_""","_nextcnt_",",nexttag,.writer,$g(orderDelimiter))
+   	}
+ 	}
+ }
+ set ok=writer.EndRootElement()
+ set ok=writer.EndDocument()
+ quit ok=1
+ //
+ /*************************************
+  * NAME: element
+  * DESC: Recursive Call to traverse through the XML elements.
+  * PARAMS:
+  *   gloref		 - The global to access (via indirection) to read in the xml structure
+  *	  element		 - The current element (as a global subscript) that is being processed
+  *	  writer		 - The stream object we are writing to
+  *	  orderDelimiter - The delimiter used (if applicable) to separate ordering index from the actual element/attribute names
+  *	VERSION HISTORY:
+  *   v2010003 - added orderDelimiter
+  **************************************/
+element(gloref,element,writer,orderDelimiter)
+ new elementcnt,nexttag,text,ok,content,isCData,writeElement,writeAttribute
+ set elementcnt=""
+ for { set elementcnt=$o(@(gloref_"element,elementcnt)")) quit:elementcnt=""
+    set writeElement=element
+ 	if $length($get(orderDelimiter)) set writeElement=$select($length(element,orderDelimiter)>1:$piece(element,orderDelimiter,2),1:element)
+ 	set ok=writer.Element(writeElement)
+    ; Check attributes - attributes need to be written to the writer first before any elements.
+    set nexttag=""
+    for { set nexttag=$o(@(gloref_"element,elementcnt,nexttag)")) quit:nexttag=""
+       set text=$g(@(gloref_"element,elementcnt,nexttag)"))
+       if text'="" {  // This is an attribute
+       	  set writeAttribute=nexttag
+       	  if $length($get(orderDelimiter)) set writeAttribute=$select($length(nexttag,orderDelimiter)>1:$piece(nexttag,orderDelimiter,2),1:nexttag)
+          set ok=writer.WriteAttribute(writeAttribute,text)
+       }
+    }   
+    ; Check elements - now write the sub elements.
+    set nexttag=""
+    for { set nexttag=$o(@(gloref_"element,elementcnt,nexttag)")) quit:nexttag=""
+       set text=$g(@(gloref_"element,elementcnt,nexttag)"))
+       if text'="" Continue  // This is an attribute - we already wrote this in the previous loop.
+       if $d(@(gloref_"element,elementcnt,nexttag)"))=10 {  // This is an element
+          do element(gloref_""""_element_""","_elementcnt_",",nexttag,.writer,$g(orderDelimiter))
+       }   
+    }
+    set content=$g(@(gloref_"element,elementcnt)"))
+    if content'="" {
+    	set isCData=0
+    	if content["<" set isCData=1
+    	if 'isCData set ok=writer.WriteChars(content)
+    	if isCData set ok=writer.WriteCData(content)
+    }
+    set ok=writer.EndElement()
+ }
+ quit
+ // 
+
+
+
